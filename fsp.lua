@@ -206,6 +206,46 @@ local function xor(l, r)
     return l ~= r
 end
 
+local function getf_N()
+    local p = memory.getregister("p")
+    return (AND(p, BIT(7)) ~= 0)
+end
+
+local function getf_V()
+    local p = memory.getregister("p")
+    return (AND(p, BIT(6)) ~= 0)
+end
+
+local function getf_U()
+    local p = memory.getregister("p")
+    return (AND(p, BIT(5)) ~= 0)
+end
+
+local function getf_B()
+    local p = memory.getregister("p")
+    return (AND(p, BIT(4)) ~= 0)
+end
+
+local function getf_D()
+    local p = memory.getregister("p")
+    return (AND(p, BIT(3)) ~= 0)
+end
+
+local function getf_I()
+    local p = memory.getregister("p")
+    return (AND(p, BIT(2)) ~= 0)
+end
+
+local function getf_Z()
+    local p = memory.getregister("p")
+    return (AND(p, BIT(1)) ~= 0)
+end
+
+local function getf_C()
+    local p = memory.getregister("p")
+    return (AND(p, BIT(0)) ~= 0)
+end
+
 local function mainbus_new()
     local mainbus = {
         parent =            nil,
@@ -236,23 +276,23 @@ local function cpu_new(mainbus)
     local cpu = {
         bus =               mainbus,
 
-        cycles =            0,
+        cycles =            debugger.getcyclescount(),
         skip_cycles =       0,
 
         -- registers
-        r_PC =              0,
-        r_SP =              0,
-        r_A =               0,
-        r_X =               0,
-        r_Y =               0,
+        r_PC =              memory.getregister("pc"),
+        r_SP =              memory.getregister("s"),
+        r_A =               memory.getregister("a"),
+        r_X =               memory.getregister("x"),
+        r_Y =               memory.getregister("y"),
 
         -- status flags (f_B not used)
-        f_C =               false,
-        f_Z =               false,
-        f_I =               false,
-        f_D =               false,
-        f_V =               false,
-        f_N =               false,
+        f_C =               getf_C(),
+        f_Z =               getf_Z(),
+        f_I =               getf_I(),
+        f_D =               getf_D(),
+        f_V =               getf_V(),
+        f_N =               getf_N(),
     }
 
     function cpu:fork()
@@ -344,7 +384,7 @@ local function cpu_new(mainbus)
         -- <NOT USED>'skip_cycles'(from SimpleNES).
         self.skip_cycles = 0
 
-        local opcode = self.bus.read(self.r_PC)
+        local opcode = self.bus:read(self.r_PC)
         self:setr_PC(self.r_PC + 1)
 
         if self:execute_implied(opcode) then return end
@@ -356,19 +396,19 @@ local function cpu_new(mainbus)
     end
 
     local implied_switch = {
-        [OPCI.NOP] =    function(self) end
+        [OPCI.NOP] =    function(self) end,
         [OPCI.BRK] =    function(self)
             self:interrupt(INTR.BRK_)
-        end
+        end,
         [OPCI.JSR] =    function(self)
             self:push_stack(u8((self.r_PC + 1) / 256))  -- >> 8
             self:push_stack(u8(self.r_PC + 1))
             self:setr_PC(self:read_address_u16(self.r_PC))
-        end
+        end,
         [OPCI.RTS] =    function(self)
             self:setr_PC(self:pull_stack())
             self:setr_PC(OR(self.r_PC, self:pull_stack() * 256) + 1)  -- << 8
-        end
+        end,
         [OPCI.RTI] =    function(self)
             local flags = self:pull_stack()
             self.f_N = i2b(AND(flags, 0x80))
@@ -379,10 +419,10 @@ local function cpu_new(mainbus)
             self.f_C = i2b(AND(flags, 0x01))
             self:setr_PC(self:pull_stack())
             self:setr_PC(OR(self.r_PC, self:pull_stack() * 256))  -- << 8
-        end
+        end,
         [OPCI.JMP] =    function(self)
             self:setr_PC(self:read_address_u16(self.r_PC))
-        end
+        end,
         [OPCI.JMPI] =   function(self)
             local location = self:read_address_u16(self.r_PC)
             local page = AND(location, 0xFF00)
@@ -395,7 +435,7 @@ local function cpu_new(mainbus)
                     )
                 )
             ))
-        end
+        end,
         [OPCI.PHP] =    function(self)
             local flags = 
                 b2i(self.f_N) * 128 +
@@ -407,7 +447,7 @@ local function cpu_new(mainbus)
                 b2i(self.f_Z) * 2 +
                 b2i(self.f_C)
             self:push_stack(flags)
-        end
+        end,
         [OPCI.PLP] =    function(self)
             local flags = self:pull_stack()
             self.f_N = i2b(AND(flags, 0x80))
@@ -416,74 +456,74 @@ local function cpu_new(mainbus)
             self.f_I = i2b(AND(flags, 0x04))
             self.f_Z = i2b(AND(flags, 0x02))
             self.f_C = i2b(AND(flags, 0x01))
-        end
+        end,
         [OPCI.PHA] =    function(self)
             self:push_stack(self.r_A)
-        end
+        end,
         [OPCI.PLA] =    function(self)
             self:setr_A(self:pull_stack())
             self:set_ZN(self.r_A)
-        end
+        end,
         [OPCI.DEY] =    function(self)
             self:setr_Y(self.r_Y - 1)
             self:set_ZN(self.r_Y)
-        end
+        end,
         [OPCI.DEX] =    function(self)
             self:setr_X(self.r_X - 1)
             self:set_ZN(self.r_X)
-        end
+        end,
         [OPCI.TAY] =    function(self)
             self:setr_Y(self.r_A)
             self:set_ZN(self.r_Y)
-        end
+        end,
         [OPCI.INY] =    function(self)
             self:setr_Y(self.r_Y + 1)
             self:set_ZN(self.r_Y)
-        end
+        end,
         [OPCI.INX] =    function(self)
             self:setr_X(self.r_X + 1)
             self:set_ZN(self.r_X)
-        end
+        end,
         [OPCI.CLC] =    function(self)
             self.f_C = false
-        end
+        end,
         [OPCI.SEC] =    function(self)
             self.f_C = true
-        end
+        end,
         [OPCI.CLI] =    function(self)
             self.f_I = false
-        end
+        end,
         [OPCI.SEI] =    function(self)
             self.f_I = true
-        end
+        end,
         [OPCI.CLD] =    function(self)
             self.f_D = false
-        end
+        end,
         [OPCI.SED] =    function(self)
             self.f_D = true
-        end
+        end,
         [OPCI.TYA] =    function(self)
             self:setr_A(self.r_Y)
             self:set_ZN(self.r_A)
-        end
+        end,
         [OPCI.CLV] =    function(self)
             self.f_V = false
-        end
+        end,
         [OPCI.TXA] =    function(self)
             self:setr_A(self.r_X)
             self:set_ZN(self.r_A)
-        end
+        end,
         [OPCI.TXS] =    function(self)
             self:setr_SP(self.r_X)
-        end
+        end,
         [OPCI.TAX] =    function(self)
             self:setr_X(self.r_A)
             self:set_ZN(self.r_X)
-        end
+        end,
         [OPCI.TSX] =    function(self)
             self:setr_X(self.r_SP)
             self:set_ZN(self.r_X)
-        end
+        end,
     }
     function cpu:execute_implied(opcode)
         local f = implied_switch[opcode]
@@ -537,22 +577,22 @@ local function cpu_new(mainbus)
                 self.bus:read(AND(zero_addr + 1, 0xFF)) * 256
             )
             return u16(location)
-        end
+        end,
         [ADDR_MODE1.ZERO_PAGE] =            function(self, op)
             local location = self.bus:read(self.r_PC)
             self:setr_PC(self.r_PC + 1)
             return location
-        end
+        end,
         [ADDR_MODE1.IMMEDIATE] =            function(self, op)
             local location = self.r_PC
             self:setr_PC(self.r_PC + 1)
             return location
-        end
+        end,
         [ADDR_MODE1.ABSOLUTE] =             function(self, op)
             local location = self:read_address_u16(self.r_PC)
             self:setr_PC(self.r_PC + 2)
             return location
-        end
+        end,
         [ADDR_MODE1.INDIRECT_Y] =           function(self, op)
             local zero_addr = self.bus:read(self.r_PC)
             self:setr_PC(self.r_PC + 1)
@@ -564,7 +604,7 @@ local function cpu_new(mainbus)
                 self:set_page_crossed(location, location + self.r_Y)
             end
             return location + self.r_Y
-        end
+        end,
         [ADDR_MODE1.INDEXED_X] =            function(self, op)
             local location = AND(
                 self.bus:read(self.r_PC) + self.r_X,
@@ -572,7 +612,7 @@ local function cpu_new(mainbus)
             )
             self:setr_PC(self.r_PC + 1)
             return location
-        end
+        end,
         [ADDR_MODE1.ABSOLUTE_Y] =           function(self, op)
             local location = self:read_address_u16(self.r_PC)
             self:setr_PC(self.r_PC + 2)
@@ -580,7 +620,7 @@ local function cpu_new(mainbus)
                 self:set_page_crossed(location, location + self.r_Y)
             end
             return location + self.r_Y
-        end
+        end,
         [ADDR_MODE1.ABSOLUTE_X] =           function(self, op)
             local location = self:read_address_u16(self.r_PC)
             self:setr_PC(self.r_PC + 2)
@@ -588,21 +628,21 @@ local function cpu_new(mainbus)
                 self:set_page_crossed(location, location + self.r_X)
             end
             return location + self.r_X
-        end
+        end,
     }
     local op1_switch = {
         [OPC1.ORA] =                        function(self, location)
             self:setr_A(OR(self.r_A, self.bus:read(location)))
             self:set_ZN(self.r_A)
-        end
+        end,
         [OPC1.AND] =                        function(self, location)
             self:setr_A(AND(self.r_A, self.bus:read(location)))
             self:set_ZN(self.r_A)
-        end
+        end,
         [OPC1.EOR] =                        function(self, location)
             self:setr_A(XOR(self.r_A, self.bus:read(location)))
             self:set_ZN(self.r_A)
-        end
+        end,
         [OPC1.ADC] =                        function(self, location)
             local operand = self.bus:read(location)
             local sum = self.r_A + operand + b2i(self.f_C)
@@ -614,14 +654,14 @@ local function cpu_new(mainbus)
             ))
             self:setr_A(sum)
             self:set_ZN(self.r_A)
-        end
+        end,
         [OPC1.STA] =                        function(self, location)
             self.bus:write(location, self.r_A)
-        end
+        end,
         [OPC1.LDA] =                        function(self, location)
             self:setr_A(self.bus:read(location))
             self:set_ZN(self.r_A)
-        end
+        end,
         [OPC1.SBC] =                        function(self, location)
             local subtrahend = u16(self.bus:read(location))
             local diff = u16(self.r_A - subtrahend - b2i(not self.f_C))
@@ -633,12 +673,12 @@ local function cpu_new(mainbus)
             ))
             self:setr_A(diff)
             self:set_ZN(diff)
-        end
+        end,
         [OPC1.CMP] =                        function(self, location)
             local diff = u16(self.r_A - self.bus:read(location))
             self.f_C = not i2b(AND(diff, 0x100))
             self:set_ZN(diff)
-        end
+        end,
     }
     function cpu:execute_type1(opcode)
         if AND(opcode, INS_MODE_MASK) ~= 0x1 then
@@ -669,20 +709,20 @@ local function cpu_new(mainbus)
             local location = self.r_PC
             self:setr_PC(self.r_PC + 1)
             return location
-        end
+        end,
         [ADDR_MODE2.ZERO_PAGE_] =           function(self, op)
             local location = self.bus:read(self.r_PC)
             self:setr_PC(self.r_PC + 1)
             return location
-        end
+        end,
         [ADDR_MODE2.ACCUMULATOR] =          function(self, op)
             return 0
-        end
+        end,
         [ADDR_MODE2.ABSOLUTE_] =            function(self, op)
             local location = self:read_address_u16(self.r_PC)
             self:setr_PC(self.r_PC + 2)
             return location
-        end
+        end,
         [ADDR_MODE2.INDEXED] =              function(self, op)
             local location = self.bus:read(self.r_PC)
             self:setr_PC(self.r_PC + 1)
@@ -693,7 +733,7 @@ local function cpu_new(mainbus)
                 index = self.r_X
             end
             return AND(0xFF, location + index)
-        end
+        end,
         [ADDR_MODE2.ABSOLUTE_INDEXED] =     function(self, op)
             local location = self:read_address_u16(self.r_PC)
             self:setr_PC(self.r_PC + 2)
@@ -705,7 +745,7 @@ local function cpu_new(mainbus)
             end
             self:set_page_crossed(location, location + index)
             return location + index
-        end
+        end,
     }
     local op2_switch = {
         [OPC2.ASL] =                        function(self, op, location, mode)
@@ -728,7 +768,7 @@ local function cpu_new(mainbus)
                 self:set_ZN(operand)
                 self.bus:write(location, operand)
             end
-        end
+        end,
         [OPC2.LSR] =                        function(self, op, location, mode)
             if mode == ADDR_MODE2.ACCUMULATOR then
                 local prev_c = self.f_C
@@ -749,24 +789,24 @@ local function cpu_new(mainbus)
                 self:set_ZN(operand)
                 self.bus:write(location, operand)
             end
-        end
+        end,
         [OPC2.STX] =                        function(self, op, location, mode)
             self.bus:write(location, self.r_X)
-        end
+        end,
         [OPC2.LDX] =                        function(self, op, location, mode)
             self:setr_X(self.bus:read(location))
             self:set_ZN(self.r_X)
-        end
+        end,
         [OPC2.DEC] =                        function(self, op, location, mode)
             local tmp = self.bus:read(location) - 1
             self:set_ZN(tmp)
             self.bus:write(location, tmp)
-        end
+        end,
         [OPC2.INC] =                        function(self, op, location, mode)
             local tmp = self.bus:read(location) + 1
             self:set_ZN(tmp)
             self.bus:write(location, tmp)
-        end
+        end,
     }
     op2_switch[OPC2.ROL] = op2_switch[OPC2.ASL]
     op2_switch[OPC2.ROR] = op2_switch[OPC2.LSR]
@@ -799,28 +839,28 @@ local function cpu_new(mainbus)
             local location = self.r_PC
             self:setr_PC(self.r_PC + 1)
             return location
-        end
+        end,
         [ADDR_MODE2.ZERO_PAGE_] =           function(self, op)
             local location = self.bus:read(self.r_PC)
             self:setr_PC(self.r_PC + 1)
             return location
-        end
+        end,
         [ADDR_MODE2.ABSOLUTE_] =            function(self, op)
             local location = self:read_address_u16(self.r_PC)
             self:setr_PC(self.r_PC + 2)
             return location
-        end
+        end,
         [ADDR_MODE2.INDEXED] =              function(self, op)
             local location = AND(0xFF, self.bus:read(self.r_PC) + self.r_X)
             self:setr_PC(self.r_PC + 1)
             return location
-        end
+        end,
         [ADDR_MODE2.ABSOLUTE_INDEXED] =     function(self, op)
             local location = self:read_address_u16(self.r_PC)
             self:setr_PC(self.r_PC + 2)
             self:set_page_crossed(location, location + self.r_X)
             return location + self.r_X
-        end
+        end,
     }
     local op0_switch = {
         [OPC0.BIT] =                        function(self, location)
@@ -828,24 +868,24 @@ local function cpu_new(mainbus)
             self.f_Z = not i2b(AND(self.r_A, operand))
             sefl.f_V = i2b(AND(operand, 0x40))
             sefl.f_N = i2b(AND(operand, 0x80))
-        end
+        end,
         [OPC0.STY] =                        function(self, location)
             self.bus:write(location, self.r_Y)
-        end
+        end,
         [OPC0.LDY] =                        function(self, location)
             self:setr_Y(self.bus:read(location))
             self:set_ZN(self.r_Y)
-        end
+        end,
         [OPC0.CPY] =                        function(self, location)
             local diff = u16(self.r_Y - self.bus:read(location))
             self.f_C = not i2b(AND(diff, 0x100))
             self:set_ZN(diff)
-        end
+        end,
         [OPC0.CPX] =                        function(self, location)
             local diff = u16(self.r_X - self.bus:read(location))
             self.f_C = not i2b(AND(diff, 0x100))
             self:set_ZN(diff)
-        end
+        end,
     }
     function cpu:execute_type0(opcode)
         if AND(opcode, INS_MODE_MASK) ~= 0x0 then
@@ -900,3 +940,49 @@ local function cpu_new(mainbus)
 
     return cpu
 end
+
+local s_last_test_result = {}
+
+local function _exec_cb()
+    -- this function will be called before each real instruction.
+    local throw = debugger.hitbreakpoint
+    if s_last_test_result.started ~= nil then
+        if s_last_test_result.r_PC ~= memory.getregister("pc") then throw() end
+        if s_last_test_result.r_SP ~= memory.getregister("s") then throw() end
+        if s_last_test_result.r_A ~= memory.getregister("a") then throw() end
+        if s_last_test_result.r_X ~= memory.getregister("x") then throw() end
+        if s_last_test_result.r_Y ~= memory.getregister("y") then throw() end
+        if s_last_test_result.f_C ~= getf_C() then throw() end
+        if s_last_test_result.f_Z ~= getf_Z() then throw() end
+        if s_last_test_result.f_I ~= getf_I() then throw() end
+        if s_last_test_result.f_D ~= getf_D() then throw() end
+        if s_last_test_result.f_V ~= getf_V() then throw() end
+        if s_last_test_result.f_N ~= getf_N() then throw() end
+    end
+    s_last_test_result.started = true
+
+    local bus = mainbus_new()
+    local cpu = cpu_new(bus)
+    cpu:step() -- emulate executing one instruction
+    s_last_test_result.r_PC = cpu.r_PC
+    s_last_test_result.r_SP = cpu.r_SP
+    s_last_test_result.r_A = cpu.r_A
+    s_last_test_result.r_X = cpu.r_X
+    s_last_test_result.r_Y = cpu.r_Y
+    s_last_test_result.f_C = cpu.f_C
+    s_last_test_result.f_Z = cpu.f_Z
+    s_last_test_result.f_I = cpu.f_I
+    s_last_test_result.f_D = cpu.f_D
+    s_last_test_result.f_V = cpu.f_V
+    s_last_test_result.f_N = cpu.f_N
+end
+
+local function self_test_loop()
+    memory.registerexec(0x8000, 0x10000 - 0x8000, _exec_cb)
+    while true do
+        emu.frameadvance()
+    end
+end
+
+-- Uncomment the code below to execute self-test.
+--self_test_loop()
