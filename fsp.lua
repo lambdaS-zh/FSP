@@ -206,43 +206,45 @@ local function xor(l, r)
     return l ~= r
 end
 
+local getr = function(name) return memory.getregister(name) end
+
 local function getf_N()
-    local p = memory.getregister("p")
+    local p = getr("p")
     return (AND(p, BIT(7)) ~= 0)
 end
 
 local function getf_V()
-    local p = memory.getregister("p")
+    local p = getr("p")
     return (AND(p, BIT(6)) ~= 0)
 end
 
 local function getf_U()
-    local p = memory.getregister("p")
+    local p = getr("p")
     return (AND(p, BIT(5)) ~= 0)
 end
 
 local function getf_B()
-    local p = memory.getregister("p")
+    local p = getr("p")
     return (AND(p, BIT(4)) ~= 0)
 end
 
 local function getf_D()
-    local p = memory.getregister("p")
+    local p = getr("p")
     return (AND(p, BIT(3)) ~= 0)
 end
 
 local function getf_I()
-    local p = memory.getregister("p")
+    local p = getr("p")
     return (AND(p, BIT(2)) ~= 0)
 end
 
 local function getf_Z()
-    local p = memory.getregister("p")
+    local p = getr("p")
     return (AND(p, BIT(1)) ~= 0)
 end
 
 local function getf_C()
-    local p = memory.getregister("p")
+    local p = getr("p")
     return (AND(p, BIT(0)) ~= 0)
 end
 
@@ -280,11 +282,11 @@ local function cpu_new(mainbus)
         skip_cycles =       0,
 
         -- registers
-        r_PC =              memory.getregister("pc"),
-        r_SP =              memory.getregister("s"),
-        r_A =               memory.getregister("a"),
-        r_X =               memory.getregister("x"),
-        r_Y =               memory.getregister("y"),
+        r_PC =              getr("pc"),
+        r_SP =              getr("s"),
+        r_A =               getr("a"),
+        r_X =               getr("x"),
+        r_Y =               getr("y"),
 
         -- status flags (f_B not used)
         f_C =               getf_C(),
@@ -360,7 +362,7 @@ local function cpu_new(mainbus)
 
     function cpu:pull_stack()
         self:setr_SP(self.r_SP + 1)
-        return self.bus:read(OR(ox100, self.r_SP))
+        return self.bus:read(OR(0x100, self.r_SP))
     end
 
     function cpu:set_ZN(value)
@@ -943,15 +945,56 @@ end
 
 local s_last_test_result = {}
 
+local function throw()
+    emu.print("------real------")
+    emu.print(string.format(
+        "PC=%X, SP=%X, A=%X, X=%X, Y=%X",
+        getr("pc"),
+        getr("s"),
+        getr("a"),
+        getr("x"),
+        getr("y")
+    ))
+    emu.print(string.format(
+        "C=%s, Z=%s, I=%s, D=%s, V=%s, N=%s",
+        tostring(getf_C()),
+        tostring(getf_Z()),
+        tostring(getf_I()),
+        tostring(getf_D()),
+        tostring(getf_V()),
+        tostring(getf_N())
+    ))
+
+    emu.print("------fake------")
+    emu.print(string.format(
+        "PC=%X, SP=%X, A=%X, X=%X, Y=%X",
+        s_last_test_result.r_PC,
+        s_last_test_result.r_SP,
+        s_last_test_result.r_A,
+        s_last_test_result.r_X,
+        s_last_test_result.r_Y
+    ))
+    emu.print(string.format(
+        "C=%s, Z=%s, I=%s, D=%s, V=%s, N=%s",
+        tostring(s_last_test_result.f_C),
+        tostring(s_last_test_result.f_Z),
+        tostring(s_last_test_result.f_I),
+        tostring(s_last_test_result.f_D),
+        tostring(s_last_test_result.f_V),
+        tostring(s_last_test_result.f_N)
+    ))
+
+    debugger.hitbreakpoint()
+end
+
 local function _exec_cb()
     -- this function will be called before each real instruction.
-    local throw = debugger.hitbreakpoint
     if s_last_test_result.started ~= nil then
-        if s_last_test_result.r_PC ~= memory.getregister("pc") then throw() end
-        if s_last_test_result.r_SP ~= memory.getregister("s") then throw() end
-        if s_last_test_result.r_A ~= memory.getregister("a") then throw() end
-        if s_last_test_result.r_X ~= memory.getregister("x") then throw() end
-        if s_last_test_result.r_Y ~= memory.getregister("y") then throw() end
+        --if s_last_test_result.r_PC ~= getr("pc") then throw() end
+        --if s_last_test_result.r_SP ~= getr("s") then throw() end
+        if s_last_test_result.r_A ~= getr("a") then throw() end
+        if s_last_test_result.r_X ~= getr("x") then throw() end
+        if s_last_test_result.r_Y ~= getr("y") then throw() end
         if s_last_test_result.f_C ~= getf_C() then throw() end
         if s_last_test_result.f_Z ~= getf_Z() then throw() end
         if s_last_test_result.f_I ~= getf_I() then throw() end
