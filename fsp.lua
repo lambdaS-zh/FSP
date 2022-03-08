@@ -1,6 +1,8 @@
 ---- Fceux SubSystem for Prediction ----
 ---- Transplanted from Project-SimpleNES ----
 
+-- Ref: https://max.book118.com/html/2017/0524/108824872.shtm
+
 local INS_MODE_MASK = 0x3       -- InstructionModeMask
 
 local OPR_MASK = 0xE0           -- OperationMask
@@ -17,6 +19,18 @@ local BRCH_ON_FLAG_SHF = 6      -- BranchOnFlagShift
 local NMI_VECTOR = 0xFFFA
 local RESET_VECTOR = 0xFFFC
 local IRQ_VECTOR = 0xFFFE
+
+local PPUCTRL = 0x2000
+local PPUMASK = 0x2001
+local PPUSTATUS = 0x2002
+local OAMADDR = 0x2003
+local OAMDATA = 0x2004
+local PPUSCROL = 0x2005
+local PPUADDR = 0x2006
+local PPUDATA = 0x2007
+local OAMDMA = 0x4014
+local JOY1 = 0x4016
+local JOY2 = 0x4017
 
 local BRCH_ON_FLAG = {
     NEGATIVE =  0,
@@ -121,6 +135,11 @@ local INTR = {
     BRK_ = 2,
 }
 
+local function uint(value)
+    if value < 0 then return math.ceil(value) end
+    return math.floor(value)
+end
+
 local function u8(value)
     while value < 0 do
         value = value + 0x100
@@ -158,15 +177,15 @@ local function i2b(value)
 end
 
 local rshift_switch = {
-    [0] = function(value) return value end,
-    [1] = function(value) return (value / 2) end,
-    [2] = function(value) return (value / 4) end,
-    [3] = function(value) return (value / 8) end,
-    [4] = function(value) return (value / 16) end,
-    [5] = function(value) return (value / 32) end,
-    [6] = function(value) return (value / 64) end,
-    [7] = function(value) return (value / 128) end,
-    [8] = function(value) return (value / 256) end,
+    [0] = function(value) return uint(value) end,
+    [1] = function(value) return uint(value / 2) end,
+    [2] = function(value) return uint(value / 4) end,
+    [3] = function(value) return uint(value / 8) end,
+    [4] = function(value) return uint(value / 16) end,
+    [5] = function(value) return uint(value / 32) end,
+    [6] = function(value) return uint(value / 64) end,
+    [7] = function(value) return uint(value / 128) end,
+    [8] = function(value) return uint(value / 256) end,
 }
 local function RSHIFT(value, steps)
     -- FCEUX bitwise func style: uppercase
@@ -174,7 +193,7 @@ local function RSHIFT(value, steps)
 end
 
 local lshift_switch = {
-    [0] = function(value) return value end,
+    [0] = function(value) return (value) end,
     [1] = function(value) return (value * 2) end,
     [2] = function(value) return (value * 4) end,
     [3] = function(value) return (value * 8) end,
@@ -252,23 +271,42 @@ local function mainbus_new()
     local mainbus = {
         parent =            nil,
         top_layer =         {},
+        on_read =           {},
+        on_write =          {}
     }
 
-    function mainbus:read(address)
-        local value = self.top_layer[address]
+    function mainbus:_read(addr)
+        local value = self.top_layer[addr]
         if value ~= nil then return value end
-        if self.parent ~= nil then return self.parent:read(address) end
-        return memory.readbyteunsigned(address)
+        if self.parent ~= nil then return self.parent:read(addr) end
+        return memory.readbyteunsigned(addr)
     end
 
-    function mainbus:write(address, value)
-        self.top_layer[address] = value
+    function mainbus:read(addr)
+        local value = self:_read(addr)
+        local cb = self.on_read[addr]
+        if cb ~= nil then cb(value) end
+        return value
+    end
+
+    function mainbus:write(addr, value)
+        self.top_layer[addr] = value
+        local cb = self.on_write[addr]
+        if cb ~= nil then cb(value) end
     end
 
     function mainbus:fork()
         local child = mainbus_new()
         child.parent = self
         return child
+    end
+
+    function mainbus:set_read_event(addr, cb)
+        self.on_read[addr] = cb
+    end
+
+    function mainbus:set_write_event(addr, cb)
+        self.on_write[addr] = cb
     end
 
     return mainbus
@@ -295,7 +333,32 @@ local function cpu_new(mainbus)
         f_D =               getf_D(),
         f_V =               getf_V(),
         f_N =               getf_N(),
+
+        skip_test_flag =    false,
     }
+
+    local function _set_skip_test(v) cpu.skip_test_flag = true end
+    mainbus:set_read_event(PPUSTATUS, _set_skip_test)
+    mainbus:set_read_event(PPUDATA, _set_skip_test)
+    mainbus:set_read_event(JOY1, _set_skip_test)
+    mainbus:set_read_event(JOY2, _set_skip_test)
+    mainbus:set_read_event(OAMDATA, _set_skip_test)
+
+    mainbus:set_write_event(PPUCTRL, _set_skip_test)
+    mainbus:set_write_event(PPUMASK, _set_skip_test)
+    mainbus:set_write_event(OAMADDR, _set_skip_test)
+    mainbus:set_write_event(PPUADDR, _set_skip_test)
+    mainbus:set_write_event(PPUSCROL, _set_skip_test)
+    mainbus:set_write_event(PPUDATA, _set_skip_test)
+    mainbus:set_write_event(OAMDMA, _set_skip_test)
+    mainbus:set_write_event(JOY1, _set_skip_test)
+    mainbus:set_write_event(JOY2, _set_skip_test)
+
+    function cpu:skip_test()
+        local result = self.skip_test_flag
+        self.skip_test_flag = false
+        return result
+    end
 
     function cpu:fork()
         local child_bus = self.bus:fork()
@@ -356,6 +419,7 @@ local function cpu_new(mainbus)
     end
 
     function cpu:push_stack(value)
+        value = u8(value)
         self.bus:write(OR(0x100, self.r_SP), value)
         self:setr_SP(self.r_SP - 1)
     end
@@ -371,6 +435,7 @@ local function cpu_new(mainbus)
     end
 
     function cpu:set_page_crossed(a, b, inc)
+        if inc == nil then inc = 1 end
         if AND(a, 0xFF00) ~= AND(b, 0xFF00) then
             self.skip_cycles = self.skip_cycles + inc
         end
@@ -380,14 +445,24 @@ local function cpu_new(mainbus)
         self.skip_cycles = self.skip_cycles + 513 + AND(self.cycles, 1)
     end
 
+    function cpu:fast_step()
+        self.skip_cycles = 0
+        self:step()
+    end
+
     function cpu:step()
         self.cycles = self.cycles + 1
 
-        -- <NOT USED>'skip_cycles'(from SimpleNES).
+        self.skip_cycles = self.skip_cycles - 1
+        if self.skip_cycles > 0 then
+            return
+        end
         self.skip_cycles = 0
 
         local opcode = self.bus:read(self.r_PC)
         self:setr_PC(self.r_PC + 1)
+
+        -- TODO: cycle_length
 
         if self:execute_implied(opcode) then return end
         if self:execute_branch(opcode) then return end
@@ -403,13 +478,13 @@ local function cpu_new(mainbus)
             self:interrupt(INTR.BRK_)
         end,
         [OPCI.JSR] =    function(self)
-            self:push_stack(u8((self.r_PC + 1) / 256))  -- >> 8
+            self:push_stack(RSHIFT(self.r_PC + 1, 8))
             self:push_stack(u8(self.r_PC + 1))
             self:setr_PC(self:read_address_u16(self.r_PC))
         end,
         [OPCI.RTS] =    function(self)
             self:setr_PC(self:pull_stack())
-            self:setr_PC(OR(self.r_PC, self:pull_stack() * 256) + 1)  -- << 8
+            self:setr_PC(OR(self.r_PC, LSHIFT(self:pull_stack(), 8)) + 1)
         end,
         [OPCI.RTI] =    function(self)
             local flags = self:pull_stack()
@@ -420,7 +495,7 @@ local function cpu_new(mainbus)
             self.f_Z = i2b(AND(flags, 0x02))
             self.f_C = i2b(AND(flags, 0x01))
             self:setr_PC(self:pull_stack())
-            self:setr_PC(OR(self.r_PC, self:pull_stack() * 256))  -- << 8
+            self:setr_PC(OR(self.r_PC, LSHIFT(self:pull_stack(), 8)))
         end,
         [OPCI.JMP] =    function(self)
             self:setr_PC(self:read_address_u16(self.r_PC))
@@ -763,7 +838,7 @@ local function cpu_new(mainbus)
                 local prev_c = self.f_C
                 local operand = self.bus:read(location)
                 self.f_C = i2b(AND(operand, 0x80))
-                operand = u16(LSHIFT(operand, 1))
+                operand = u8(LSHIFT(operand, 1))
                 if prev_c and (op == OPC2.ROL) then
                     operand = OR(operand, 1)
                 end
@@ -800,12 +875,12 @@ local function cpu_new(mainbus)
             self:set_ZN(self.r_X)
         end,
         [OPC2.DEC] =                        function(self, op, location, mode)
-            local tmp = self.bus:read(location) - 1
+            local tmp = u8(self.bus:read(location) - 1)
             self:set_ZN(tmp)
             self.bus:write(location, tmp)
         end,
         [OPC2.INC] =                        function(self, op, location, mode)
-            local tmp = self.bus:read(location) + 1
+            local tmp = u8(self.bus:read(location) + 1)
             self:set_ZN(tmp)
             self.bus:write(location, tmp)
         end,
@@ -868,8 +943,8 @@ local function cpu_new(mainbus)
         [OPC0.BIT] =                        function(self, location)
             local operand = self.bus:read(location)
             self.f_Z = not i2b(AND(self.r_A, operand))
-            sefl.f_V = i2b(AND(operand, 0x40))
-            sefl.f_N = i2b(AND(operand, 0x80))
+            self.f_V = i2b(AND(operand, 0x40))
+            self.f_N = i2b(AND(operand, 0x80))
         end,
         [OPC0.STY] =                        function(self, location)
             self.bus:write(location, self.r_Y)
@@ -943,7 +1018,7 @@ local function cpu_new(mainbus)
     return cpu
 end
 
-local s_last_test_result = {}
+local s_emu_cpu = nil
 
 local function throw()
     emu.print("------real------")
@@ -965,59 +1040,60 @@ local function throw()
         tostring(getf_N())
     ))
 
-    emu.print("------fake------")
+    emu.print("------emulated------")
     emu.print(string.format(
         "PC=%X, SP=%X, A=%X, X=%X, Y=%X",
-        s_last_test_result.r_PC,
-        s_last_test_result.r_SP,
-        s_last_test_result.r_A,
-        s_last_test_result.r_X,
-        s_last_test_result.r_Y
+        s_emu_cpu.r_PC,
+        s_emu_cpu.r_SP,
+        s_emu_cpu.r_A,
+        s_emu_cpu.r_X,
+        s_emu_cpu.r_Y
     ))
     emu.print(string.format(
         "C=%s, Z=%s, I=%s, D=%s, V=%s, N=%s",
-        tostring(s_last_test_result.f_C),
-        tostring(s_last_test_result.f_Z),
-        tostring(s_last_test_result.f_I),
-        tostring(s_last_test_result.f_D),
-        tostring(s_last_test_result.f_V),
-        tostring(s_last_test_result.f_N)
+        tostring(s_emu_cpu.f_C),
+        tostring(s_emu_cpu.f_Z),
+        tostring(s_emu_cpu.f_I),
+        tostring(s_emu_cpu.f_D),
+        tostring(s_emu_cpu.f_V),
+        tostring(s_emu_cpu.f_N)
     ))
 
-    debugger.hitbreakpoint()
+    debugger.hitbreakpoint() -- post debugger
 end
 
 local function _exec_cb()
-    -- this function will be called before each real instruction.
-    if s_last_test_result.started ~= nil then
-        --if s_last_test_result.r_PC ~= getr("pc") then throw() end
-        --if s_last_test_result.r_SP ~= getr("s") then throw() end
-        if s_last_test_result.r_A ~= getr("a") then throw() end
-        if s_last_test_result.r_X ~= getr("x") then throw() end
-        if s_last_test_result.r_Y ~= getr("y") then throw() end
-        if s_last_test_result.f_C ~= getf_C() then throw() end
-        if s_last_test_result.f_Z ~= getf_Z() then throw() end
-        if s_last_test_result.f_I ~= getf_I() then throw() end
-        if s_last_test_result.f_D ~= getf_D() then throw() end
-        if s_last_test_result.f_V ~= getf_V() then throw() end
-        if s_last_test_result.f_N ~= getf_N() then throw() end
-    end
-    s_last_test_result.started = true
+    -- Seems the callback model is like this:
+    -- 
+    -- * run_once
+    -- * pc = next(pc)
+    -- * callback
+    -- *   -> post_debugger if thrown
+    -- 
+    -- * run_once
+    -- * pc = next(pc)
+    -- * show_debugger if debugger posted
+    -- * callback
+    -- *   -> post_debugger if thrown
 
-    local bus = mainbus_new()
-    local cpu = cpu_new(bus)
-    cpu:step() -- emulate executing one instruction
-    s_last_test_result.r_PC = cpu.r_PC
-    s_last_test_result.r_SP = cpu.r_SP
-    s_last_test_result.r_A = cpu.r_A
-    s_last_test_result.r_X = cpu.r_X
-    s_last_test_result.r_Y = cpu.r_Y
-    s_last_test_result.f_C = cpu.f_C
-    s_last_test_result.f_Z = cpu.f_Z
-    s_last_test_result.f_I = cpu.f_I
-    s_last_test_result.f_D = cpu.f_D
-    s_last_test_result.f_V = cpu.f_V
-    s_last_test_result.f_N = cpu.f_N
+    local cpu = cpu_new(mainbus_new())
+
+    if s_emu_cpu ~= nil and not s_emu_cpu:skip_test() then
+        --if s_emu_cpu.r_PC ~= cpu.r_PC then throw() end
+        --if s_emu_cpu.r_SP ~= cpu.r_SP then throw() end
+        if s_emu_cpu.r_A ~= cpu.r_A then return throw() end
+        if s_emu_cpu.r_X ~= cpu.r_X then return throw() end
+        if s_emu_cpu.r_Y ~= cpu.r_Y then return throw() end
+        if s_emu_cpu.f_C ~= cpu.f_C then return throw() end
+        if s_emu_cpu.f_Z ~= cpu.f_Z then return throw() end
+        if s_emu_cpu.f_I ~= cpu.f_I then return throw() end
+        if s_emu_cpu.f_D ~= cpu.f_D then return throw() end
+        if s_emu_cpu.f_V ~= cpu.f_V then return throw() end
+        if s_emu_cpu.f_N ~= cpu.f_N then return throw() end
+    end
+
+    cpu:fast_step() -- emulate executing one instruction
+    s_emu_cpu = cpu
 end
 
 local function self_test_loop()
