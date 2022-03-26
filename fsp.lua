@@ -445,6 +445,20 @@ local function cpu_new(mainbus)
         self.skip_cycles = self.skip_cycles + 513 + AND(self.cycles, 1)
     end
 
+    function cpu:fast_step_by_cycles(cycles)
+        while cycles > 0 do
+            cycles = cycles - self.skip_cycles
+            self:fast_step()
+        end
+    end
+
+    function cpu:step_by_cycles(cycles)
+        while cycles > 0 do
+            cycles = cycles - 1
+            self:step()
+        end
+    end
+
     function cpu:fast_step()
         self.skip_cycles = 0
         self:step()
@@ -1018,6 +1032,44 @@ local function cpu_new(mainbus)
     return cpu
 end
 
+local function turbo_pad_new(player)
+    local frames_delay = 5
+    local pad = {
+        player = player,
+        count = frames_delay,
+    }
+
+    function pad:press_left()
+        self.count = self.count - 1
+        if self.count <= 0 then
+            self.count = frames_delay
+            joypad.set(self.player, {left=true})
+        end
+    end
+
+    function pad:press_right()
+        self.count = self.count - 1
+        if self.count <= 0 then
+            self.count = frames_delay
+            joypad.set(self.player, {right=true})
+        end
+    end
+
+    function pad:press_a()
+        self.count = self.count - 1
+        if self.count <= 0 then
+            self.count = frames_delay
+            joypad.set(self.player, {A=true})
+        end
+    end
+
+    return pad
+end
+
+
+------ TEST CODE ------
+-- DO NOT use codes below unless you are testing if fsp runs correctly.
+
 local s_emu_cpu = nil
 
 local function throw()
@@ -1079,8 +1131,8 @@ local function _exec_cb()
     local cpu = cpu_new(mainbus_new())
 
     if s_emu_cpu ~= nil and not s_emu_cpu:skip_test() then
-        --if s_emu_cpu.r_PC ~= cpu.r_PC then throw() end
-        --if s_emu_cpu.r_SP ~= cpu.r_SP then throw() end
+        --if s_emu_cpu.r_PC ~= cpu.r_PC then return throw() end
+        --if s_emu_cpu.r_SP ~= cpu.r_SP then return throw() end
         if s_emu_cpu.r_A ~= cpu.r_A then return throw() end
         if s_emu_cpu.r_X ~= cpu.r_X then return throw() end
         if s_emu_cpu.r_Y ~= cpu.r_Y then return throw() end
